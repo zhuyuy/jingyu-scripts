@@ -1,0 +1,6 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>帖子分类 · 本地安装</title>
+<style>body{font:16px/1.7 system-ui;max-width:760px;margin:60px auto;padding:20px;color:#e7e9ea;background:#101820}a{color:#64c4ff}article{border:1px solid #536471;padding:20px;border-radius:14px;margin:25px 0}button{padding:8px;margin:4px;cursor:pointer}code{overflow-wrap:anywhere}</style>
+<h1>Jingyu 帖子分类</h1><p><a href="/post-classifier.user.js">安装油猴脚本</a> · <a href="https://x.com/swaymolina" target="_blank" rel="noopener">打开 Sway Molina 的 X 页面</a></p>
+<p>安装后刷新 X，点击点赞、书签或帖子下方「分类」。下面是本地模拟帖子，不会操作 X 账号。</p>
+<article data-testid="tweet"><a href="/demo/status/123456"><time>本地测试帖子</time></a><p data-testid="tweetText">离线多分类测试：先点赞，创建 AI、待阅读，再收藏检查分类是否共享。</p><div role="group"><button data-testid="like">点赞</button><button data-testid="bookmark">收藏</button></div></article>
+<script>document.querySelectorAll('[data-testid=like],[data-testid=bookmark]').forEach(b=>b.onclick=()=>{const t=b.dataset.testid;b.dataset.testid={like:'unlike',unlike:'like',bookmark:'removeBookmark',removeBookmark:'bookmark'}[t];b.textContent={like:'点赞',unlike:'已点赞',bookmark:'收藏',removeBookmark:'已收藏'}[b.dataset.testid]});</script><script src="/preview.js"></script></html>
