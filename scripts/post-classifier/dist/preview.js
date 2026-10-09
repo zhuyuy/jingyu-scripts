@@ -162,7 +162,7 @@
   var styles = `
 :host{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#292d32;color-scheme:light;--bg:#fff;--panel:#f7f8fa;--line:#e5e7eb;--accent:#1684cf}
 *{box-sizing:border-box}button,input,select{font:inherit}button,a,input,select{touch-action:manipulation}button{cursor:pointer;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:inherit;min-height:36px;padding:7px 12px}button:hover{border-color:#c7d3df;background:#f3f6f9}button:disabled{opacity:.55;cursor:wait}button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}input,select{min-width:0;max-width:100%;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:inherit;padding:9px 11px}input[type=checkbox]{accent-color:var(--accent);width:18px;height:18px}a{color:#1479b8;text-decoration:none}h2,h3,p{margin:0}h2{font-size:19px}h3{font-size:15px}.muted{font-size:12px;color:#69717b}.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.grow{flex:1}.primary{background:var(--accent);color:white;border-color:var(--accent)}.primary:hover{background:#0874bb}.danger{color:#b14040}.pill{border:1px solid var(--line);border-radius:6px;background:#f2f4f7;padding:3px 8px;font-size:12px}.empty{padding:28px 12px;text-align:center;color:#69717b}.stack{display:grid;gap:16px}.actions{display:flex;gap:8px;flex-wrap:wrap}.list{display:grid;gap:10px}.item{border:1px solid var(--line);border-radius:10px;padding:16px;display:grid;gap:12px}.text{white-space:pre-wrap;overflow-wrap:anywhere;max-height:120px;overflow:auto}
-#launcher{position:fixed;right:20px;bottom:24px;z-index:2147483645;border-radius:999px;box-shadow:0 3px 12px #172b4d20;background:var(--bg);color:#1479b8;font-weight:600;padding:9px 16px;border-color:#d9e5ee}
+#launcher{position:fixed;right:20px;bottom:24px;z-index:2147483645;border-radius:999px;box-shadow:0 3px 12px #172b4d20;background:var(--bg);color:#1479b8;font-weight:600;padding:9px 16px;border-color:#d9e5ee;display:flex;align-items:center;gap:6px;touch-action:none;user-select:none;cursor:grab}#launcher.dragging{cursor:grabbing;box-shadow:0 6px 20px #172b4d30}.launcher-grip{font-size:17px;line-height:1;color:#7998ad}
 .overlay{position:fixed;inset:0;background:#15253638;z-index:2147483646;display:grid;place-items:center;padding:16px}.dialog{width:min(780px,100%);max-height:88vh;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:24px;box-shadow:0 12px 48px #15253626}.header{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:20px}.tabs{display:flex;gap:8px;margin-bottom:20px}.tabs [aria-selected=true]{background:#edf6fd;border-color:#b9d9f0;color:#136ca6}
 #picker{position:fixed;inset:auto;margin:0;width:min(344px,calc(100vw - 24px));max-height:min(540px,calc(100dvh - 24px));overflow:auto;background:var(--bg);color:inherit;border:1px solid #e4e7eb;border-radius:12px;padding:0;z-index:2147483647;box-shadow:0 12px 36px #1525361a,0 2px 8px #1525360d}#picker[hidden]{display:none}
 .picker-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px 12px}.picker-heading h3{font-size:14px;font-weight:650;color:#32363c}.picker-count{font-size:12px;color:#7b818a}.selected-tags{display:flex;gap:6px;flex-wrap:wrap;padding:0 18px 14px;max-height:94px;overflow:auto}.selected-tags[hidden]{display:none}.picker-search{padding:0 14px 12px}#tag-search{display:block;width:100%;height:40px;font-size:14px;background:#fafbfc;border-color:#dfe3e8;border-radius:7px;padding:9px 11px}#tag-search::placeholder{color:#9399a2}#tag-search:focus{outline:none;border-color:#8dbde0;box-shadow:0 0 0 2px #1684cf12;background:white}.picker-list-label{border-top:1px solid #eef0f2;padding:12px 18px 6px;font-size:11px;color:#868c95}
@@ -328,6 +328,149 @@
     } };
   }
 
+  // src/ui/draggable-launcher.js
+  var POSITION_KEY = "pc:ui:launcher-position";
+  var clamp = (value, min, max) => Math.max(min, Math.min(value, max));
+  function mountDraggableLauncher(button, storage, onError) {
+    const win = button.ownerDocument.defaultView;
+    let position = null, drag = null, touched = false, destroyed = false, suppressClick = false;
+    let clickTimer, saves = Promise.resolve();
+    const listeners = [];
+    const listen = (target, type, handler, options) => {
+      target.addEventListener(type, handler, options);
+      listeners.push(() => target.removeEventListener(type, handler, options));
+    };
+    function bounds() {
+      const viewport = win.visualViewport;
+      const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
+      const width = viewport?.width ?? win.innerWidth, height = viewport?.height ?? win.innerHeight;
+      const minX = left + 12, minY = top + 12;
+      return {
+        minX,
+        minY,
+        maxX: Math.max(minX, left + width - button.offsetWidth - 12),
+        maxY: Math.max(minY, top + height - button.offsetHeight - 12)
+      };
+    }
+    function place(x, y) {
+      const b = bounds();
+      x = clamp(x, b.minX, b.maxX);
+      y = clamp(y, b.minY, b.maxY);
+      Object.assign(button.style, { left: `${x}px`, top: `${y}px`, right: "auto", bottom: "auto" });
+      return { x: (x - b.minX) / (b.maxX - b.minX || 1), y: (y - b.minY) / (b.maxY - b.minY || 1) };
+    }
+    function restore() {
+      if (!position || drag) return;
+      const b = bounds();
+      place(b.minX + position.x * (b.maxX - b.minX), b.minY + position.y * (b.maxY - b.minY));
+    }
+    function persist() {
+      const value = position && { ...position };
+      saves = saves.then(() => storage.set(POSITION_KEY, value)).catch((error) => {
+        if (!destroyed) onError(error);
+      });
+      return saves;
+    }
+    function finish(cancelled) {
+      if (!drag) return;
+      const previous = drag;
+      drag = null;
+      button.classList.remove("dragging");
+      if (button.hasPointerCapture?.(previous.id)) button.releasePointerCapture(previous.id);
+      if (!previous.moved) return;
+      suppressClick = true;
+      win.clearTimeout(clickTimer);
+      clickTimer = win.setTimeout(() => {
+        suppressClick = false;
+      }, 500);
+      if (cancelled) {
+        if (position) restore();
+        else for (const name of ["left", "top", "right", "bottom"]) button.style.removeProperty(name);
+      } else {
+        const rect = button.getBoundingClientRect();
+        position = place(rect.left, rect.top);
+        void persist();
+      }
+    }
+    listen(button, "pointerdown", (event) => {
+      if (event.button !== 0 || event.isPrimary === false || drag) return;
+      touched = true;
+      suppressClick = false;
+      win.clearTimeout(clickTimer);
+      const rect = button.getBoundingClientRect();
+      drag = { id: event.pointerId, startX: event.clientX, startY: event.clientY, left: rect.left, top: rect.top, moved: false };
+      button.setPointerCapture(event.pointerId);
+    });
+    listen(button, "pointermove", (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      const dx = event.clientX - drag.startX, dy = event.clientY - drag.startY;
+      if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+      drag.moved = true;
+      button.classList.add("dragging");
+      event.preventDefault();
+      event.stopPropagation();
+      place(drag.left + dx, drag.top + dy);
+    });
+    listen(button, "pointerup", (event) => {
+      if (drag?.id === event.pointerId) finish(false);
+    });
+    for (const type of ["pointercancel", "lostpointercapture"]) {
+      listen(button, type, (event) => {
+        if (drag?.id === event.pointerId) finish(true);
+      });
+    }
+    listen(button, "click", (event) => {
+      if (!suppressClick || event.detail === 0) return;
+      suppressClick = false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
+    listen(button, "keydown", (event) => {
+      if (event.key === "Escape" && drag) {
+        event.preventDefault();
+        event.stopPropagation();
+        finish(true);
+        return;
+      }
+      const delta = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
+      if (!delta || !event.altKey || event.ctrlKey || event.metaKey || drag) return;
+      event.preventDefault();
+      event.stopPropagation();
+      touched = true;
+      const rect = button.getBoundingClientRect(), step = event.shiftKey ? 40 : 10;
+      position = place(rect.left + delta[0] * step, rect.top + delta[1] * step);
+      void persist();
+    });
+    listen(win, "resize", restore);
+    if (win.visualViewport) {
+      listen(win.visualViewport, "resize", restore);
+      listen(win.visualViewport, "scroll", restore);
+    }
+    const ready = Promise.resolve().then(() => storage.get(POSITION_KEY, null)).then((value) => {
+      if (destroyed || touched || !value || !Number.isFinite(value.x) || !Number.isFinite(value.y)) return;
+      position = { x: clamp(value.x, 0, 1), y: clamp(value.y, 0, 1) };
+      restore();
+    }).catch((error) => {
+      if (!destroyed) onError(error);
+    });
+    return {
+      ready,
+      reset() {
+        touched = true;
+        finish(true);
+        position = null;
+        for (const name of ["left", "top", "right", "bottom"]) button.style.removeProperty(name);
+        return persist();
+      },
+      destroy() {
+        destroyed = true;
+        finish(true);
+        win.clearTimeout(clickTimer);
+        listeners.forEach((remove) => remove());
+      }
+    };
+  }
+
   // src/ui/app.js
   function el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
@@ -352,10 +495,21 @@
         e.stopPropagation();
       });
       this.root.append(el("style", { text: styles }));
-      this.launcher = el("button", { id: "launcher", text: "\u5206\u7C7B\u5E93", onclick: () => this.manager() });
+      this.launcher = el(
+        "button",
+        {
+          id: "launcher",
+          type: "button",
+          title: "\u70B9\u51FB\u6253\u5F00\u5206\u7C7B\u5E93\uFF1B\u6309\u4F4F\u62D6\u52A8\u8C03\u6574\u4F4D\u7F6E\uFF0CAlt + \u65B9\u5411\u952E\u5FAE\u8C03",
+          "aria-keyshortcuts": "Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight",
+          onclick: () => this.manager()
+        },
+        [el("span", { class: "launcher-grip", text: "\u283F", "aria-hidden": "true" }), el("span", { text: "\u5206\u7C7B\u5E93" })]
+      );
       this.toastNode = el("div", { id: "toast", role: "status" });
       this.root.append(this.launcher, this.toastNode);
       document.body.append(this.host);
+      this.launcherDrag = mountDraggableLauncher(this.launcher, this.app.store.api, () => this.toast("\u5165\u53E3\u4F4D\u7F6E\u4FDD\u5B58\u5931\u8D25\uFF0C\u53EF\u7EE7\u7EED\u62D6\u52A8\u91CD\u8BD5"));
       this.outside = (e) => {
         if (this.picker && !e.composedPath().includes(this.picker) && !e.composedPath().includes(this.anchor)) this.closePicker();
       };
@@ -567,10 +721,15 @@
         await this.app.store.import(JSON.parse(await file.text()));
         this.toast("\u5907\u4EFD\u5DF2\u5408\u5E76");
       }));
-      content.append(input, el("p", { class: "muted", text: "\u672C\u5730\u64CD\u4F5C\u4F1A\u7ACB\u5373\u4FDD\u5B58\u3002\u540C\u6B65\u5931\u8D25\u65F6\u4FDD\u7559\u5F85\u540C\u6B65\u4FEE\u6539\uFF1B\u5BFC\u51FA\u6587\u4EF6\u4E0D\u5305\u542B\u767B\u5F55\u51ED\u636E\u3002" }));
+      content.append(
+        input,
+        el("p", { class: "muted", text: "\u672C\u5730\u64CD\u4F5C\u4F1A\u7ACB\u5373\u4FDD\u5B58\u3002\u540C\u6B65\u5931\u8D25\u65F6\u4FDD\u7559\u5F85\u540C\u6B65\u4FEE\u6539\uFF1B\u5BFC\u51FA\u6587\u4EF6\u4E0D\u5305\u542B\u767B\u5F55\u51ED\u636E\u3002" }),
+        this.button("\u6062\u590D\u5206\u7C7B\u5E93\u9ED8\u8BA4\u4F4D\u7F6E", () => this.launcherDrag.reset())
+      );
       panel.append(content);
     }
     destroy() {
+      this.launcherDrag.destroy();
       this.closePicker();
       clearTimeout(this.toastTimer);
       document.removeEventListener("pointerdown", this.outside, true);

@@ -1,5 +1,6 @@
 import { styles } from './styles.js';
 import { mountTagPicker } from './tag-picker.js';
+import { mountDraggableLauncher } from './draggable-launcher.js';
 export function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
@@ -19,9 +20,12 @@ export class UI {
       e.stopPropagation();
     });
     this.root.append(el('style', { text: styles }));
-    this.launcher = el('button', { id: 'launcher', text: '分类库', onclick: () => this.manager() });
+    this.launcher = el('button', { id: 'launcher', type: 'button', title: '点击打开分类库；按住拖动调整位置，Alt + 方向键微调',
+      'aria-keyshortcuts': 'Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight', onclick: () => this.manager() },
+    [el('span', { class: 'launcher-grip', text: '⠿', 'aria-hidden': 'true' }), el('span', { text: '分类库' })]);
     this.toastNode = el('div', { id: 'toast', role: 'status' });
     this.root.append(this.launcher, this.toastNode); document.body.append(this.host);
+    this.launcherDrag = mountDraggableLauncher(this.launcher, this.app.store.api, () => this.toast('入口位置保存失败，可继续拖动重试'));
     this.outside = e => { if (this.picker && !e.composedPath().includes(this.picker) && !e.composedPath().includes(this.anchor)) this.closePicker(); };
     document.addEventListener('pointerdown', this.outside, true);
     this.escape = e => { if (e.key === 'Escape') { if (this.picker) this.closePicker(); else this.closeManager(); } };
@@ -135,7 +139,8 @@ export class UI {
     }), this.button('导入备份', () => input.click())]));
     const input = el('input', { type: 'file', accept: 'application/json,.json', hidden: '' });
     input.addEventListener('change', this.run(async () => { const file = input.files[0]; if (!file) return; if (file.size > 20 * 1024 * 1024) throw new Error('备份不能超过 20 MB'); await this.app.store.import(JSON.parse(await file.text())); this.toast('备份已合并'); }));
-    content.append(input, el('p', { class: 'muted', text: '本地操作会立即保存。同步失败时保留待同步修改；导出文件不包含登录凭据。' })); panel.append(content);
+    content.append(input, el('p', { class: 'muted', text: '本地操作会立即保存。同步失败时保留待同步修改；导出文件不包含登录凭据。' }),
+      this.button('恢复分类库默认位置', () => this.launcherDrag.reset())); panel.append(content);
   }
-  destroy() { this.closePicker(); clearTimeout(this.toastTimer); document.removeEventListener('pointerdown', this.outside, true); document.removeEventListener('keydown', this.escape); window.removeEventListener('resize', this.reposition); window.removeEventListener('scroll', this.reposition, true); this.host.remove(); }
+  destroy() { this.launcherDrag.destroy(); this.closePicker(); clearTimeout(this.toastTimer); document.removeEventListener('pointerdown', this.outside, true); document.removeEventListener('keydown', this.escape); window.removeEventListener('resize', this.reposition); window.removeEventListener('scroll', this.reposition, true); this.host.remove(); }
 }
