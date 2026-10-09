@@ -1,3 +1,5 @@
+import { mountActionHint } from '../ui/action-hint.js';
+
 export function extractPost(article) {
   // A timestamp permalink identifies the outer post, never a quoted post or video source.
   const time = [...article.querySelectorAll('a[href*="/status/"]')].find(a => a.querySelector('time') && a.closest('article') === article);
@@ -10,9 +12,12 @@ export function extractPost(article) {
   return { id: `x:${match[2]}`, url: `https://x.com/${match[1]}/status/${match[2]}`, author: `@${match[1]}`, text: text.slice(0, 10000), ...state };
 }
 export function mountX({ openPicker, changedAction, label, onError }) {
-  let scheduled = false;
+  let scheduled = false, destroyed = false, interaction = 0;
+  const hint = mountActionHint({ openPicker, onError });
   function decorate() {
     scheduled = false;
+    if (destroyed) return;
+    hint.refresh();
     for (const article of document.querySelectorAll('article[data-testid="tweet"]')) {
       const post = extractPost(article);
       if (!post) continue;
@@ -26,6 +31,7 @@ export function mountX({ openPicker, changedAction, label, onError }) {
         shadow.querySelector('button').addEventListener('click', e => {
           e.preventDefault(); e.stopPropagation();
           const current = extractPost(article);
+          hint.hide();
           if (current) openPicker(current, host).catch(onError);
         });
         actions.insertAdjacentElement('afterend', host);
@@ -38,7 +44,7 @@ export function mountX({ openPicker, changedAction, label, onError }) {
   }
   function schedule() { if (!scheduled) { scheduled = true; requestAnimationFrame(decorate); } }
   const observer = new MutationObserver(schedule);
-  observer.observe(document.body, { childList: true, subtree: true });
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-testid', 'href'] });
   const timers = new Set();
   function later(fn, ms) { const id = setTimeout(() => { timers.delete(id); fn(); }, ms); timers.add(id); }
   const sequences = new Map();
@@ -53,18 +59,24 @@ export function mountX({ openPicker, changedAction, label, onError }) {
     const activeId = field === 'liked' ? 'unlike' : 'removeBookmark';
     const inactiveId = field === 'liked' ? 'like' : 'bookmark';
     const wanted = ['like', 'bookmark'].includes(action);
+    const request = ++interaction;
+    if (!wanted) hint.dismiss(post.id, field);
     const key = post.id + field, sequence = (sequences.get(key) || 0) + 1;
     sequences.set(key, sequence);
     let tries = 0;
     const check = () => {
-      if (sequences.get(key) !== sequence) return;
+      if (destroyed || sequences.get(key) !== sequence) return;
       const currentArticle = [...document.querySelectorAll('article[data-testid="tweet"]')].find(a => extractPost(a)?.id === post.id);
       if (!currentArticle) return;
       const currentButton = currentArticle.querySelector(`[data-testid="${activeId}"], [data-testid="${inactiveId}"]`);
       const active = currentButton?.dataset.testid === activeId;
       if (currentButton && active === wanted) {
         const currentPost = extractPost(currentArticle);
-        changedAction(post, field, active).then(() => wanted && openPicker(currentPost, currentButton)).catch(onError);
+        changedAction(currentPost, field, active).then(() => {
+          if (!wanted || destroyed || request !== interaction || sequences.get(key) !== sequence) return;
+          hint.show({ post: currentPost, anchor: currentButton, field,
+            valid: () => currentArticle.isConnected && extractPost(currentArticle)?.id === post.id && currentButton.dataset.testid === activeId });
+        }).catch(onError);
         // Reconcile a late optimistic UI rollback without deleting the user's categories.
         later(() => {
           if (sequences.get(key) !== sequence || !currentArticle.isConnected || extractPost(currentArticle)?.id !== post.id) return;
@@ -76,5 +88,5 @@ export function mountX({ openPicker, changedAction, label, onError }) {
     later(check, 250);
   }
   document.addEventListener('click', clicked, true); decorate();
-  return { refresh: schedule, destroy() { observer.disconnect(); document.removeEventListener('click', clicked, true); for (const t of timers) clearTimeout(t); document.querySelectorAll('[data-jingyu-post]').forEach(x => x.remove()); } };
+  return { refresh: schedule, destroy() { destroyed = true; hint.destroy(); observer.disconnect(); document.removeEventListener('click', clicked, true); for (const t of timers) clearTimeout(t); document.querySelectorAll('[data-jingyu-post]').forEach(x => x.remove()); } };
 }

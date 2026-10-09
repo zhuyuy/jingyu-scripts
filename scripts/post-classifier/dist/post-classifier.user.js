@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jingyu 帖子分类
 // @namespace    https://tools.jingyu.dev/post-classifier
-// @version      0.1.1
+// @version      0.1.2
 // @description  点赞和收藏共享多分类，本地保存，可登录 tools 同步
 // @homepageURL  https://github.com/zhuyuy/jingyu-scripts/tree/master/scripts/post-classifier
 // @updateURL    https://raw.githubusercontent.com/zhuyuy/jingyu-scripts/master/scripts/post-classifier/dist/post-classifier.user.js
@@ -764,6 +764,116 @@
     }
   };
 
+  // src/ui/action-hint.js
+  function mountActionHint({ openPicker, onError }) {
+    const win = document.defaultView;
+    let current = null;
+    function hide() {
+      if (!current) return;
+      win.clearTimeout(current.timer);
+      current.host.remove();
+      current = null;
+    }
+    function refresh() {
+      if (!current) return;
+      const { anchor, valid, host } = current;
+      if (!anchor.isConnected || !valid()) return hide();
+      const r = anchor.getBoundingClientRect();
+      if (r.bottom <= 0 || r.top >= win.innerHeight || r.right <= 0 || r.left >= win.innerWidth) return hide();
+      host.style.left = Math.max(8, Math.min(r.left, win.innerWidth - host.offsetWidth - 8)) + "px";
+      host.style.top = Math.max(8, r.bottom + host.offsetHeight + 8 <= win.innerHeight ? r.bottom + 6 : r.top - host.offsetHeight - 6) + "px";
+    }
+    function show({ post, anchor, field, valid }) {
+      hide();
+      if (!anchor.isConnected || !valid()) return;
+      const host = document.createElement("div");
+      host.id = "jingyu-classify-hint";
+      Object.assign(host.style, { position: "fixed", zIndex: "2147483645", inset: "auto", margin: "0", padding: "0", border: "0", background: "transparent", overflow: "visible" });
+      if ("showPopover" in host) host.setAttribute("popover", "manual");
+      const root = host.attachShadow({ mode: "open" });
+      root.innerHTML = `<style>
+      :host{color-scheme:light}button{font:13px/1.5 system-ui;color:#1479b8;background:#fff;border:1px solid #d9e5ee;border-radius:999px;padding:5px 11px;box-shadow:0 2px 8px #15253614;cursor:pointer;white-space:nowrap;animation:hint-life 2s linear forwards}
+      button:hover{background:#f2f8fc}button:focus-visible{outline:2px solid #1684cf;outline-offset:2px}
+      @keyframes hint-life{0%,92%{opacity:1}100%{opacity:0}}
+      @media(prefers-reduced-motion:reduce){button{animation:none}}
+      </style><button type="button" aria-label="\u6DFB\u52A0\u5E16\u5B50\u5206\u7C7B">\uFF0B \u5206\u7C7B</button>`;
+      const button = root.querySelector("button");
+      const state = { host, anchor, post, field, valid, remaining: 2e3, started: win.performance.now(), timer: null, hover: false, focus: false };
+      current = state;
+      const resume = () => {
+        if (current !== state || state.hover || state.focus || state.timer !== null) return;
+        state.started = win.performance.now();
+        button.style.animationPlayState = "running";
+        state.timer = win.setTimeout(() => {
+          if (current === state) hide();
+        }, state.remaining);
+      };
+      const pause = () => {
+        if (current !== state || state.timer === null) return;
+        win.clearTimeout(state.timer);
+        state.timer = null;
+        state.remaining = Math.max(0, state.remaining - (win.performance.now() - state.started));
+        button.style.animationPlayState = "paused";
+      };
+      button.addEventListener("pointerenter", () => {
+        state.hover = true;
+        pause();
+      });
+      button.addEventListener("pointerleave", () => {
+        state.hover = false;
+        resume();
+      });
+      button.addEventListener("focus", () => {
+        state.focus = true;
+        pause();
+      });
+      button.addEventListener("blur", () => {
+        state.focus = false;
+        resume();
+      });
+      for (const type of ["pointerdown", "keydown"]) root.addEventListener(type, (event) => {
+        event.stopPropagation();
+        if (type === "keydown" && event.key === "Escape") hide();
+      });
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const usable = anchor.isConnected && valid();
+        hide();
+        if (usable) Promise.resolve().then(() => openPicker(post, anchor)).catch(onError);
+      });
+      document.body.append(host);
+      host.showPopover?.();
+      refresh();
+      if (current === state) resume();
+    }
+    const outside = (event) => {
+      if (current && !event.composedPath().includes(current.host)) hide();
+    };
+    const visibility = () => {
+      if (document.hidden) hide();
+    };
+    win.addEventListener("scroll", refresh, true);
+    win.addEventListener("resize", refresh);
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("visibilitychange", visibility);
+    return {
+      show,
+      refresh,
+      hide,
+      dismiss(postId, field) {
+        if (current?.post.id === postId && current.field === field) hide();
+      },
+      destroy() {
+        hide();
+        win.removeEventListener("scroll", refresh, true);
+        win.removeEventListener("resize", refresh);
+        document.removeEventListener("pointerdown", outside, true);
+        document.removeEventListener("visibilitychange", visibility);
+      }
+    };
+  }
+
   // src/platforms/x.js
   function extractPost(article) {
     const time = [...article.querySelectorAll('a[href*="/status/"]')].find((a) => a.querySelector("time") && a.closest("article") === article);
@@ -776,9 +886,12 @@
     return { id: `x:${match[2]}`, url: `https://x.com/${match[1]}/status/${match[2]}`, author: `@${match[1]}`, text: text.slice(0, 1e4), ...state };
   }
   function mountX({ openPicker, changedAction, label, onError }) {
-    let scheduled = false;
+    let scheduled = false, destroyed = false, interaction = 0;
+    const hint = mountActionHint({ openPicker, onError });
     function decorate() {
       scheduled = false;
+      if (destroyed) return;
+      hint.refresh();
       for (const article of document.querySelectorAll('article[data-testid="tweet"]')) {
         const post = extractPost(article);
         if (!post) continue;
@@ -794,6 +907,7 @@
             e.preventDefault();
             e.stopPropagation();
             const current = extractPost(article);
+            hint.hide();
             if (current) openPicker(current, host).catch(onError);
           });
           actions.insertAdjacentElement("afterend", host);
@@ -811,7 +925,7 @@
       }
     }
     const observer = new MutationObserver(schedule);
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-testid", "href"] });
     const timers = /* @__PURE__ */ new Set();
     function later(fn, ms) {
       const id = setTimeout(() => {
@@ -832,18 +946,28 @@
       const activeId = field === "liked" ? "unlike" : "removeBookmark";
       const inactiveId = field === "liked" ? "like" : "bookmark";
       const wanted = ["like", "bookmark"].includes(action);
+      const request2 = ++interaction;
+      if (!wanted) hint.dismiss(post.id, field);
       const key = post.id + field, sequence = (sequences.get(key) || 0) + 1;
       sequences.set(key, sequence);
       let tries = 0;
       const check = () => {
-        if (sequences.get(key) !== sequence) return;
+        if (destroyed || sequences.get(key) !== sequence) return;
         const currentArticle = [...document.querySelectorAll('article[data-testid="tweet"]')].find((a) => extractPost(a)?.id === post.id);
         if (!currentArticle) return;
         const currentButton = currentArticle.querySelector(`[data-testid="${activeId}"], [data-testid="${inactiveId}"]`);
         const active = currentButton?.dataset.testid === activeId;
         if (currentButton && active === wanted) {
           const currentPost = extractPost(currentArticle);
-          changedAction(post, field, active).then(() => wanted && openPicker(currentPost, currentButton)).catch(onError);
+          changedAction(currentPost, field, active).then(() => {
+            if (!wanted || destroyed || request2 !== interaction || sequences.get(key) !== sequence) return;
+            hint.show({
+              post: currentPost,
+              anchor: currentButton,
+              field,
+              valid: () => currentArticle.isConnected && extractPost(currentArticle)?.id === post.id && currentButton.dataset.testid === activeId
+            });
+          }).catch(onError);
           later(() => {
             if (sequences.get(key) !== sequence || !currentArticle.isConnected || extractPost(currentArticle)?.id !== post.id) return;
             const latest = currentArticle.querySelector(`[data-testid="${activeId}"], [data-testid="${inactiveId}"]`);
@@ -856,6 +980,8 @@
     document.addEventListener("click", clicked, true);
     decorate();
     return { refresh: schedule, destroy() {
+      destroyed = true;
+      hint.destroy();
       observer.disconnect();
       document.removeEventListener("click", clicked, true);
       for (const t of timers) clearTimeout(t);

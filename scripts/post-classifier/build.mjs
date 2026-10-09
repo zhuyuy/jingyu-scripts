@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 const header = `// ==UserScript==
 // @name         Jingyu 帖子分类
 // @namespace    https://tools.jingyu.dev/post-classifier
-// @version      0.1.1
+// @version      0.1.2
 // @description  点赞和收藏共享多分类，本地保存，可登录 tools 同步
 // @homepageURL  https://github.com/zhuyuy/jingyu-scripts/tree/master/scripts/post-classifier
 // @updateURL    https://raw.githubusercontent.com/zhuyuy/jingyu-scripts/master/scripts/post-classifier/dist/post-classifier.user.js

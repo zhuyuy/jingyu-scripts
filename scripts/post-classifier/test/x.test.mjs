@@ -10,8 +10,12 @@ test('X adapter targets outer permalink, waits for UI change, supports virtualiz
   const adapter=mountX({label:()=>'+ 分类',async changedAction(...args){calls.push(args);},async openPicker(...args){opened.push(args);},onError:e=>{throw e;}});
   try {
     const article=document.querySelector('article'); assert.equal(extractPost(article).id,'x:123');
-    const button=article.querySelector('[data-testid=like]'); button.click(); await pause(350); assert.equal(calls.length,0);
-    button.dataset.testid='unlike'; await pause(200); assert.equal(calls[0][0].id,'x:123'); assert.equal(calls[0][2],true); assert.equal(opened.length,1);
+    const button=article.querySelector('[data-testid=like]'); button.getBoundingClientRect=()=>({left:100,right:140,top:100,bottom:140}); button.click(); await pause(350); assert.equal(calls.length,0);
+    button.dataset.testid='unlike'; await pause(200); assert.equal(calls[0][0].id,'x:123'); assert.equal(calls[0][2],true); assert.equal(opened.length,0);
+    document.querySelector('#jingyu-classify-hint').shadowRoot.querySelector('button').click(); await pause(10); assert.equal(opened.length,1);
+    button.click(); button.dataset.testid='like'; await pause(300); assert.equal(document.querySelector('#jingyu-classify-hint'),null);
+    button.click(); button.dataset.testid='unlike'; await pause(300); assert.ok(document.querySelector('#jingyu-classify-hint'));
+    button.click(); assert.equal(document.querySelector('#jingyu-classify-hint'),null); button.dataset.testid='like';
     article.querySelector('a').href='/outer/status/456'; await pause(50);
     article.querySelector('[data-jingyu-post]').shadowRoot.querySelector('button').click(); await pause(10); assert.equal(opened.at(-1)[0].id,'x:456');
     assert.equal(article.querySelectorAll('[data-jingyu-post]').length,1);
